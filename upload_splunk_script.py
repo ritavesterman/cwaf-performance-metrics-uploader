@@ -35,7 +35,12 @@ def send_to_splunk(splunk_address, splunk_token, flat_json):
     if VERBOSE:
         print(f"Sending to Splunk: {json.dumps(splunk_event, indent=2)}")
 
-    response = requests.post(splunk_address, headers=headers, data=json.dumps(splunk_event), verify=False)
+    try:
+        response = requests.post(splunk_address, headers=headers, data=json.dumps(splunk_event), verify=False)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        print(f"Failed to send data to Splunk: {e}")
+        return None
 
     if not VERBOSE:
         print(f"{flat_json['timestamp']} - Response from Splunk: {response.status_code} - {response.text}")
@@ -44,22 +49,25 @@ def send_to_splunk(splunk_address, splunk_token, flat_json):
     return response.status_code
 
 def flatten_error_response_types(timestamp, account_id, site):
-    site_id = site["siteId"]
-    site_name = site["siteName"]
-    statistics = site.get("statistics", {})
-    error_response_types = statistics.get("errorResponseTypes", {})
-    
-    for error_type, value in error_response_types.items():
-        flat_json = {
-            "timestamp": timestamp,
-            "accountId": account_id,
-            "siteId": site_id,
-            "siteName": site_name,
-            "metricName": "errorResponseTypes",
-            "errorType": error_type,
-            "value": value
-        }
-        send_to_splunk(SPLUNK_ADDRESS, SPLUNK_TOKEN, flat_json)
+    try:
+        site_id = site["siteId"]
+        site_name = site["siteName"]
+        statistics = site.get("statistics", {})
+        error_response_types = statistics.get("errorResponseTypes", {})
+
+        for error_type, value in error_response_types.items():
+            flat_json = {
+                "timestamp": timestamp,
+                "accountId": account_id,
+                "siteId": site_id,
+                "siteName": site_name,
+                "metricName": "errorResponseTypes",
+                "errorType": error_type,
+                "value": value
+            }
+            send_to_splunk(SPLUNK_ADDRESS, SPLUNK_TOKEN, flat_json)
+    except Exception as e:
+        print(f"Error processing errorResponseTypes for site {site_id}: {e}")
 
 def flatten_origin_response_time(timestamp, account_id, site):
     site_id = site["siteId"]
@@ -159,13 +167,16 @@ def process_and_send():
 
 def scheduled_task():
     while True:
-        now = datetime.utcnow()
-        # Calculate seconds until the next `MM:00`
-        seconds_until_next_execution = (60 - now.second) - now.microsecond / 1_000_000
-        time.sleep(seconds_until_next_execution)  # Sleep until the next MM:00
+        try:
+            now = datetime.utcnow()
+            # Calculate seconds until the next `MM:00`
+            seconds_until_next_execution = (60 - now.second) - now.microsecond / 1_000_000
+            time.sleep(seconds_until_next_execution)  # Sleep until the next MM:00
 
-        thread = threading.Thread(target=process_and_send)
-        thread.start()
+            thread = threading.Thread(target=process_and_send)
+            thread.start()
+        except Exception as e:
+            print(f"Unexpected error in scheduled_task: {e}")
 
 if __name__ == "__main__":
     scheduled_task()
